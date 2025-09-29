@@ -5,7 +5,7 @@ import { PetitionCoreABI } from '../abi/PetitionCore';
 import { PETITION_CORE } from '../config/constants';
 import SignCampaign from './SignCampaign';
 import CreateCampaign from './CreateCampaign';
-
+import DownloadReceiptButton from './DownloadReceiptButton';
 function useActiveCampaigns(){
   const { data } = useReadContract({
     abi: PetitionCoreABI,
@@ -45,7 +45,7 @@ export default function CampaignList(){
   );
 }
 
-function CampaignCard({id}){
+function CampaignCard({ id }) {
   const { data } = useCampaign(id);
   if (!data) return null;
   const c = data;
@@ -56,7 +56,15 @@ function CampaignCard({id}){
       <p>{c.description}</p>
       <div className="small">Target: {String(c.targetAmount)} wei</div>
       <div className="small">Raised: {String(c.totalRaised)} wei • Signatures: {String(c.signatureCount)}</div>
-      <SignCampaign campaignId={id} />
+      <div className="row" style={{ marginTop: 8 }}>
+        <SignCampaign campaignId={id} />
+        <div style={{ flex: 1 }} />
+        <div className="row" style={{ gap: 8 }}>
+          <React.Suspense fallback={<span className="small">…</span>}>
+            <DownloadReceiptButton campaignId={id} />
+          </React.Suspense>
+        </div>
+      </div>
     </div>
   );
 }

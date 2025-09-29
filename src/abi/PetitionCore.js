@@ -1,7 +1,21 @@
 // src/abi/PetitionCore.js
-// Minimal ABI containing exactly the functions the frontend calls.
-
 export const PetitionCoreABI = [
+  // --- Events (add) ---
+  {
+    "anonymous": false,
+    "inputs": [
+      { "indexed": true,  "internalType": "uint256", "name": "campaignId", "type": "uint256" },
+      { "indexed": true,  "internalType": "uint256", "name": "signatureId", "type": "uint256" },
+      { "indexed": true,  "internalType": "address", "name": "signer", "type": "address" },
+      { "indexed": false, "internalType": "string",  "name": "message", "type": "string" },
+      { "indexed": false, "internalType": "uint256", "name": "signatureVersionId", "type": "uint256" },
+      { "indexed": false, "internalType": "bytes32", "name": "signedArTxId", "type": "bytes32" },
+      { "indexed": false, "internalType": "bytes32", "name": "signedContentHash", "type": "bytes32" }
+    ],
+    "name": "SignatureAdded",
+    "type": "event"
+  },
+
   // --- Signature versioning ---
   {
     "inputs": [
@@ -96,11 +110,9 @@ export const PetitionCoreABI = [
     "type": "function"
   },
 
-  // --- Campaigns (read/list) ---
+  // --- Campaigns (read/list/create) ---
   {
-    "inputs": [
-      { "internalType": "uint256", "name": "_campaignId", "type": "uint256" }
-    ],
+    "inputs": [{ "internalType": "uint256", "name": "_campaignId", "type": "uint256" }],
     "name": "getCampaignInfo",
     "outputs": [
       {
@@ -137,8 +149,6 @@ export const PetitionCoreABI = [
     "stateMutability": "view",
     "type": "function"
   },
-
-  // --- Campaigns (create) ---
   {
     "inputs": [
       { "internalType": "string",  "name": "_title", "type": "string" },
@@ -151,5 +161,48 @@ export const PetitionCoreABI = [
     "outputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }],
     "stateMutability": "nonpayable",
     "type": "function"
-  }
+  },
+  // Add/keep the SignatureAdded event (for immediate post-sign flows)
+{
+  "anonymous": false,
+  "inputs": [
+    { "indexed": true,  "internalType": "uint256", "name": "campaignId", "type": "uint256" },
+    { "indexed": true,  "internalType": "uint256", "name": "signatureId", "type": "uint256" },
+    { "indexed": true,  "internalType": "address", "name": "signer", "type": "address" },
+    { "indexed": false, "internalType": "string",  "name": "message", "type": "string" },
+    { "indexed": false, "internalType": "uint256", "name": "signatureVersionId", "type": "uint256" },
+    { "indexed": false, "internalType": "bytes32", "name": "signedArTxId", "type": "bytes32" },
+    { "indexed": false, "internalType": "bytes32", "name": "signedContentHash", "type": "bytes32" }
+  ],
+  "name": "SignatureAdded",
+  "type": "event"
+},
+
+// Add read helpers
+{
+  "inputs": [
+    { "internalType": "uint256", "name": "signatureId", "type": "uint256" }
+  ],
+  "name": "getSignatureSnapshot",
+  "outputs": [
+    { "internalType": "bytes32", "name": "arTxId", "type": "bytes32" },
+    { "internalType": "bytes32", "name": "contentHash", "type": "bytes32" },
+    { "internalType": "uint256", "name": "versionId", "type": "uint256" }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+},
+{
+  "inputs": [
+    { "internalType": "uint256", "name": "campaignId", "type": "uint256" },
+    { "internalType": "address", "name": "user", "type": "address" }
+  ],
+  "name": "getUserSignatureIdForCampaign",
+  "outputs": [
+    { "internalType": "bool", "name": "found", "type": "bool" },
+    { "internalType": "uint256", "name": "signatureId", "type": "uint256" }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+}
 ];
