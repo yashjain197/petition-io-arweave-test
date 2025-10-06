@@ -1,6 +1,5 @@
-// src/abi/PetitionCore.js
 export const PetitionCoreABI = [
-  // --- Events (add) ---
+  // --- Events ---
   {
     "anonymous": false,
     "inputs": [
@@ -162,47 +161,70 @@ export const PetitionCoreABI = [
     "stateMutability": "nonpayable",
     "type": "function"
   },
-  // Add/keep the SignatureAdded event (for immediate post-sign flows)
-{
-  "anonymous": false,
-  "inputs": [
-    { "indexed": true,  "internalType": "uint256", "name": "campaignId", "type": "uint256" },
-    { "indexed": true,  "internalType": "uint256", "name": "signatureId", "type": "uint256" },
-    { "indexed": true,  "internalType": "address", "name": "signer", "type": "address" },
-    { "indexed": false, "internalType": "string",  "name": "message", "type": "string" },
-    { "indexed": false, "internalType": "uint256", "name": "signatureVersionId", "type": "uint256" },
-    { "indexed": false, "internalType": "bytes32", "name": "signedArTxId", "type": "bytes32" },
-    { "indexed": false, "internalType": "bytes32", "name": "signedContentHash", "type": "bytes32" }
-  ],
-  "name": "SignatureAdded",
-  "type": "event"
-},
 
-// Add read helpers
-{
-  "inputs": [
-    { "internalType": "uint256", "name": "signatureId", "type": "uint256" }
-  ],
-  "name": "getSignatureSnapshot",
-  "outputs": [
-    { "internalType": "bytes32", "name": "arTxId", "type": "bytes32" },
-    { "internalType": "bytes32", "name": "contentHash", "type": "bytes32" },
-    { "internalType": "uint256", "name": "versionId", "type": "uint256" }
-  ],
-  "stateMutability": "view",
-  "type": "function"
-},
-{
-  "inputs": [
-    { "internalType": "uint256", "name": "campaignId", "type": "uint256" },
-    { "internalType": "address", "name": "user", "type": "address" }
-  ],
-  "name": "getUserSignatureIdForCampaign",
-  "outputs": [
-    { "internalType": "bool", "name": "found", "type": "bool" },
-    { "internalType": "uint256", "name": "signatureId", "type": "uint256" }
-  ],
-  "stateMutability": "view",
-  "type": "function"
-}
+  // --- Read helpers for receipts ---
+  {
+    "inputs": [
+      { "internalType": "uint256", "name": "signatureId", "type": "uint256" }
+    ],
+    "name": "getSignatureSnapshot",
+    "outputs": [
+      { "internalType": "bytes32", "name": "arTxId", "type": "bytes32" },
+      { "internalType": "bytes32", "name": "contentHash", "type": "bytes32" },
+      { "internalType": "uint256", "name": "versionId", "type": "uint256" }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      { "internalType": "uint256", "name": "campaignId", "type": "uint256" },
+      { "internalType": "address", "name": "user", "type": "address" }
+    ],
+    "name": "getUserSignatureIdForCampaign",
+    "outputs": [
+      { "internalType": "bool", "name": "found", "type": "bool" },
+      { "internalType": "uint256", "name": "signatureId", "type": "uint256" }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+
+  // --- New: export helpers for creators/beneficiaries ---
+  {
+    "inputs": [
+      { "internalType": "uint256", "name": "campaignId", "type": "uint256" }
+    ],
+    "name": "getCampaignSignaturesCount",
+    "outputs": [
+      { "internalType": "uint256", "name": "", "type": "uint256" }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      { "internalType": "uint256", "name": "campaignId", "type": "uint256" },
+      { "internalType": "uint256", "name": "offset", "type": "uint256" },
+      { "internalType": "uint256", "name": "limit", "type": "uint256" }
+    ],
+    "name": "getCampaignSignaturesDetailed",
+    "outputs": [
+      {
+        "components": [
+          { "internalType": "address", "name": "signer", "type": "address" },
+          { "internalType": "uint256", "name": "timestamp", "type": "uint256" },
+          { "internalType": "string",  "name": "message", "type": "string" },
+          { "internalType": "uint256", "name": "signatureVersionId", "type": "uint256" },
+          { "internalType": "bytes32", "name": "signedArTxId", "type": "bytes32" },
+          { "internalType": "bytes32", "name": "signedContentHash", "type": "bytes32" }
+        ],
+        "internalType": "struct PetitionCore.SignatureExport[]",
+        "name": "items",
+        "type": "tuple[]"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  }
 ];

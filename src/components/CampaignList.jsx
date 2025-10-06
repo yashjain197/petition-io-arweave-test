@@ -1,11 +1,12 @@
-// src/components/CampaignList.jsx
 import React from 'react';
-import { useReadContract } from 'wagmi';
+import { useAccount, useReadContract } from 'wagmi';
 import { PetitionCoreABI } from '../abi/PetitionCore';
 import { PETITION_CORE } from '../config/constants';
 import SignCampaign from './SignCampaign';
 import CreateCampaign from './CreateCampaign';
 import DownloadReceiptButton from './DownloadReceiptButton';
+import DownloadAllSignaturesButton from './DownloadAllSignaturesButton';
+
 function useActiveCampaigns(){
   const { data } = useReadContract({
     abi: PetitionCoreABI,
@@ -46,9 +47,12 @@ export default function CampaignList(){
 }
 
 function CampaignCard({ id }) {
+  const { address } = useAccount();
   const { data } = useCampaign(id);
   if (!data) return null;
   const c = data;
+  const isOwner = address && (address.toLowerCase() === c.beneficiary.toLowerCase() || address.toLowerCase() === c.creator.toLowerCase());
+
   return (
     <div className="card">
       <h3>{c.title}</h3>
@@ -63,6 +67,11 @@ function CampaignCard({ id }) {
           <React.Suspense fallback={<span className="small">…</span>}>
             <DownloadReceiptButton campaignId={id} />
           </React.Suspense>
+          {isOwner && (
+            <React.Suspense fallback={<span className="small">…</span>}>
+              <DownloadAllSignaturesButton campaignId={id} />
+            </React.Suspense>
+          )}
         </div>
       </div>
     </div>

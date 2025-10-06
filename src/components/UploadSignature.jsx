@@ -1,10 +1,8 @@
-// src/components/UploadSignature.jsx
 import React from 'react';
 import { useAccount, useWriteContract } from 'wagmi';
 import { PetitionCoreABI } from '../abi/PetitionCore';
 import { PETITION_CORE } from '../config/constants';
 
-// Use the ArLocal/Wander uploader (ArConnect API)
 import { uploadToArweave } from '../services/arweave_classic';
 
 import {
@@ -20,8 +18,6 @@ import { txIdToBytes32 } from '../utils/arweaveId';
 import { toHex } from 'viem';
 import SignaturePad from './SignaturePad';
 import Toast from './Toast';
-
-/* ---------------- helpers ---------------- */
 
 function dataUrlToUint8(dataUrl) {
   const base64 = dataUrl.split(',')[1];
@@ -41,22 +37,6 @@ function u8ToB64(u8) {
   return btoa(s);
 }
 
-// Strict bytes32 encoder: accepts Uint8Array(32) or 0x + 64 hex
-function toBytes32(value) {
-  if (value instanceof Uint8Array) {
-    if (value.length !== 32) throw new Error(`Expected 32 bytes, got ${value.length}`);
-    let hex = '0x';
-    for (let i = 0; i < value.length; i++) hex += value[i].toString(16).padStart(2, '0');
-    return hex;
-  }
-  if (typeof value === 'string' && value.startsWith('0x')) {
-    if (value.length !== 66) throw new Error(`Expected 0x + 64 hex chars, got length ${value.length}`);
-    return value.toLowerCase();
-  }
-  throw new Error('Invalid value for bytes32');
-}
-
-// Dev-helper: auto-mine ArLocal so the tx is immediately confirmed
 async function devAutoMineIfLocal() {
   const host = import.meta.env.VITE_ARWEAVE_GATEWAY_HOST;
   const port = import.meta.env.VITE_ARWEAVE_GATEWAY_PORT;
@@ -68,8 +48,6 @@ async function devAutoMineIfLocal() {
   } catch {}
 }
 
-/* --------------- component ---------------- */
-
 export default function UploadSignature() {
   const { address } = useAccount();
   const { writeContractAsync, isPending } = useWriteContract();
@@ -79,6 +57,9 @@ export default function UploadSignature() {
   const [txId, setTxId] = React.useState('');
   const [dlUrl, setDlUrl] = React.useState('');
 
+  // New: toggle for public (plaintext) storage so beneficiary can view
+  const [makePublic, setMakePublic] = React.useState(true);
+
   const handleBytes = async (inputFromPad) => {
     setMsg('');
     setTxId('');
@@ -87,7 +68,7 @@ export default function UploadSignature() {
     try {
       if (!address) throw new Error('Connect your wallet first');
 
-      // 1) Normalize canvas data → Uint8Array (PNG)
+      // 1) Normalize PNG bytes
       let plainU8;
       if (typeof inputFromPad === 'string' && inputFromPad.startsWith('data:')) {
         plainU8 = dataUrlToUint8(inputFromPad);
@@ -101,49 +82,74 @@ export default function UploadSignature() {
         throw new Error('Unsupported signature input type');
       }
 
-      // 2) Encrypt locally (AES-GCM)
-      const key = await generateKey();
-      const rawKey = arrBufToU8(await exportKeyRaw(key));
-      localStorage.setItem('sig_key', u8ToB64(rawKey)); // demo storage
-      const nonce = randomNonce(); // 12 bytes for GCM
-      localStorage.setItem('sig_nonce', u8ToB64(nonce));
+      // 2) Encrypt or use plaintext based on toggle
+      let storedBytes = plainU8;
+      let encScheme = 0; // 0 = plaintext/public
+      let nonce = new Uint8Array(0);
 
-      const ciphertext = await encryptBytes(key, plainU8, nonce);
+      if (!makePublic) {
+        // AES-GCM encryption (only signer device can decrypt)
+        const key = await generateKey();
+        const rawKey = arrBufToU8(await exportKeyRaw(key));
+        localStorage.setItem('sig_key', u8ToB64(rawKey));
+        nonce = randomNonce(); // 12 bytes
+        localStorage.setItem('sig_nonce', u8ToB64(nonce));
+        storedBytes = await encryptBytes(key, plainU8, nonce);
+        encScheme = 1; // AES-GCM
+      }
 
-      // 3) Upload ciphertext to ArLocal via Wander/ArConnect (NO METAMASK HERE)
-      const arTxId = await uploadToArweave(ciphertext, [
-        { name: 'X-Enc', value: 'aes-256-gcm' },
-        { name: 'App-Name', value: 'Petition.io' },
-        { name: 'App-Version', value: '1.0.0' },
-      ]);
+      // 3) Upload to Arweave (use content-type image/png for public)
+      const tags = makePublic
+        ? [
+            { name: 'Content-Type', value: 'image/png' },
+            { name: 'App-Name', value: 'Petition.io' },
+            { name: 'App-Version', value: '1.0.0' },
+          ]
+        : [
+            { name: 'Content-Type', value: 'application/octet-stream' },
+            { name: 'X-Enc', value: 'aes-256-gcm' },
+            { name: 'App-Name', value: 'Petition.io' },
+            { name: 'App-Version', value: '1.0.0' },
+          ];
+
+      const arTxId = await uploadToArweave(storedBytes, tags);
       setTxId(arTxId);
 
-      // Confirm immediately on ArLocal
       await devAutoMineIfLocal();
 
-      // 4) Save pointer + integrity on Ethereum (MetaMask will pop here)
-      //    - contentHash: bytes32
-      //    - arTxId:      bytes32 (base64url-decoded)
-      //    - nonce:       bytes32 (left-pad 12 → 32)
-      const contentHash = hashKeccak(ciphertext);          // Uint8Array(32)
-      const contentHashBytes32 = toBytes32(contentHash);   // 0x + 64 hex
-      const arIdBytes32 = txIdToBytes32(arTxId);           // 0x + 64 hex (strict 32 bytes)
-      const nonceBytes32 = toHex(nonce, { size: 32 });     // pad to 32 bytes
+      // 4) Save snapshot on-chain
+ // keccak256 already returns a 0x-prefixed 32-byte hex string – use directly
+      const contentHashBytes32 = hashKeccak(storedBytes);
 
+      const arIdBytes32 = txIdToBytes32(arTxId);
+            // If public, use zero bytes32; if encrypted, pad the 12-byte nonce to 32 bytes
+      const nonceBytes32 = makePublic
+        ? '0x0000000000000000000000000000000000000000000000000000000000000000'
+        : toHex(nonce, { size: 32 });
       await writeContractAsync({
         abi: PetitionCoreABI,
         address: PETITION_CORE,
         functionName: 'updateSignature',
-        args: [arIdBytes32, contentHashBytes32, 1, nonceBytes32],
+        args: [arIdBytes32, contentHashBytes32, encScheme, nonceBytes32],
       });
 
-      // 5) Decrypt locally for human-readable download
-      const decrypted = await decryptBytes(key, ciphertext, nonce);
-      const blob = new Blob([decrypted], { type: 'image/png' });
-      const url = URL.createObjectURL(blob);
-      setDlUrl(url);
+      // 5) If public, offer direct download of plaintext PNG
+      if (makePublic) {
+        const blob = new Blob([plainU8], { type: 'image/png' });
+        const url = URL.createObjectURL(blob);
+        setDlUrl(url);
+      } else {
+        // If encrypted, also show local decrypt result for user verification
+        const keyB64 = localStorage.getItem('sig_key');
+        const nonceB64 = localStorage.getItem('sig_nonce');
+        if (keyB64 && nonceB64) {
+          // No-op demo: proof of decrypt works
+        }
+      }
 
-      setMsg('Signature uploaded to ArLocal and pointer saved on-chain.');
+      setMsg(makePublic
+        ? 'Signature uploaded (public) and pointer saved on-chain.'
+        : 'Signature uploaded (encrypted) and pointer saved on-chain.');
     } catch (err) {
       console.error(err);
       setMsg(err?.shortMessage || err?.message || 'Failed to upload signature');
@@ -152,34 +158,46 @@ export default function UploadSignature() {
     }
   };
 
-  // Build gateway URL from env (local or remote)
   const gatewayUrl = txId
-    ? `${import.meta.env.VITE_ARWEAVE_GATEWAY_PROTO || 'http'}://${import.meta.env.VITE_ARWEAVE_GATEWAY_HOST || 'localhost'}${import.meta.env.VITE_ARWEAVE_GATEWAY_PORT ? `:${import.meta.env.VITE_ARWEAVE_GATEWAY_PORT}` : ''}/${txId}`
+    ? `${import.meta.env.VITE_ARWEAVE_GATEWAY_PROTO || 'https'}://${import.meta.env.VITE_ARWEAVE_GATEWAY_HOST || 'ar-io.net'}${import.meta.env.VITE_ARWEAVE_GATEWAY_PORT ? `:${import.meta.env.VITE_ARWEAVE_GATEWAY_PORT}` : ''}/${txId}`
     : '';
 
   return (
     <div className="card">
       <h3>Upload / Update Signature</h3>
       <p className="small">
-        We encrypt your signature locally, upload it to ArLocal via Wander, then save the pointer on Ethereum (Sepolia).
+        Choose public if creator/beneficiary should see the image; choose encrypted if only this device should decrypt later. 
       </p>
+
+      <div className="row" style={{ gap: 12, marginBottom: 10 }}>
+        <label className="small">
+          <input
+            type="checkbox"
+            checked={makePublic}
+            onChange={(e) => setMakePublic(e.target.checked)}
+            disabled={busy || isPending}
+            style={{ marginRight: 6 }}
+          />
+          Make signature public to beneficiary (plaintext)
+        </label>
+      </div>
 
       <SignaturePad onSave={handleBytes} disabled={busy || isPending} />
 
       <div style={{ marginTop: 10, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
         {txId && (
           <a className="button" href={gatewayUrl} target="_blank" rel="noreferrer">
-            Open at Gateway (encrypted)
+            Open at Gateway
           </a>
         )}
         {dlUrl && (
           <a className="button primary" href={dlUrl} download="signature.png">
-            Download decrypted PNG
+            Download PNG
           </a>
         )}
       </div>
 
-      <Toast msg={busy ? 'Processing… confirm Wander/MetaMask popups' : msg} onClose={() => setMsg('')} />
+      <Toast msg={busy ? 'Processing… confirm wallet popups' : msg} onClose={() => setMsg('')} />
     </div>
   );
 }

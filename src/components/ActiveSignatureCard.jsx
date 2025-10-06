@@ -11,6 +11,12 @@ function b64ToBytes(b64){
   for (let i=0;i<bin.length;i++) out[i] = bin.charCodeAt(i);
   return out;
 }
+function isPng(bytes) {
+  if (!bytes || bytes.length < 8) return false;
+  const sig = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+  for (let i = 0; i < 8; i++) if (bytes[i] !== sig[i]) return false;
+  return true;
+}
 
 export default function ActiveSignatureCard(){
   const { address } = useAccount();
@@ -33,20 +39,24 @@ export default function ActiveSignatureCard(){
       const resp = await fetch(url);
       const ct = new Uint8Array(await resp.arrayBuffer());
 
-      // Verify hash matches on-chain snapshot
       const onchain = String(version.contentHash).toLowerCase();
       const got = String(hashKeccak(ct)).toLowerCase();
       if (onchain !== got) {
         console.warn('Integrity mismatch', { onchain, got });
       }
 
-      const keyB64 = localStorage.getItem('sig_key');
-      const nonceB64 = localStorage.getItem('sig_nonce');
-      if (!keyB64 || !nonceB64) throw new Error('Missing local key/nonce (demo storage)');
-      const key = await importKeyRaw(b64ToBytes(keyB64));
-      const nonce = b64ToBytes(nonceB64);
+      let pt = null;
+      if (isPng(ct)) {
+        pt = ct;
+      } else {
+        const keyB64 = localStorage.getItem('sig_key');
+        const nonceB64 = localStorage.getItem('sig_nonce');
+        if (!keyB64 || !nonceB64) throw new Error('Missing local key/nonce (encrypted asset)');
+        const key = await importKeyRaw(b64ToBytes(keyB64));
+        const nonce = b64ToBytes(nonceB64);
+        pt = await decryptBytes(key, ct, nonce);
+      }
 
-      const pt = await decryptBytes(key, ct, nonce);
       const blob = new Blob([pt], { type: 'image/png' });
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
@@ -63,7 +73,7 @@ export default function ActiveSignatureCard(){
         <h3>Active Signature</h3>
         <div className="row" style={{gap:8}}>
           <button onClick={()=>refetch?.()}>Refresh</button>
-          <button className="primary" onClick={onDownload}>Decrypt & Download</button>
+          <button className="primary" onClick={onDownload}>Download</button>
         </div>
       </div>
       {!address && <div className="small">Connect wallet to view</div>}
