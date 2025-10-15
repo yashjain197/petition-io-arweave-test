@@ -1,3 +1,4 @@
+// src/components/CampaignList.jsx
 import React from 'react';
 import { useAccount, useReadContract } from 'wagmi';
 import { PetitionCoreABI } from '../abi/PetitionCore';
@@ -6,28 +7,29 @@ import SignCampaign from './SignCampaign';
 import CreateCampaign from './CreateCampaign';
 import DownloadReceiptButton from './DownloadReceiptButton';
 import DownloadAllSignaturesButton from './DownloadAllSignaturesButton';
+import ContributeCampaign from './ContributeCampaign';
 
-function useActiveCampaigns(){
+function useActiveCampaigns() {
   const { data } = useReadContract({
     abi: PetitionCoreABI,
     address: PETITION_CORE,
     functionName: 'getActiveCampaigns',
-    args: [0n, 100n]
+    args: [0n, 100n],
   });
   return data || [];
 }
 
-function useCampaign(id){
+function useCampaign(id) {
   return useReadContract({
     abi: PetitionCoreABI,
     address: PETITION_CORE,
     functionName: 'getCampaignInfo',
     args: [BigInt(id)],
-    query: { enabled: id !== undefined }
+    query: { enabled: id !== undefined },
   });
 }
 
-export default function CampaignList(){
+export default function CampaignList() {
   const ids = useActiveCampaigns();
 
   return (
@@ -39,8 +41,10 @@ export default function CampaignList(){
 
       <h2>Active Campaigns</h2>
       <div className="list">
-        {ids.map((id)=> <CampaignCard key={String(id)} id={id} />)}
-        {ids.length===0 && <div className="small">No active campaigns</div>}
+        {ids.map((id) => (
+          <CampaignCard key={String(id)} id={id} />
+        ))}
+        {ids.length === 0 && <div className="small">No active campaigns</div>}
       </div>
     </div>
   );
@@ -51,7 +55,10 @@ function CampaignCard({ id }) {
   const { data } = useCampaign(id);
   if (!data) return null;
   const c = data;
-  const isOwner = address && (address.toLowerCase() === c.beneficiary.toLowerCase() || address.toLowerCase() === c.creator.toLowerCase());
+  const isOwner =
+    address &&
+    (address.toLowerCase() === c.beneficiary.toLowerCase() ||
+      address.toLowerCase() === c.creator.toLowerCase());
 
   return (
     <div className="card">
@@ -59,19 +66,21 @@ function CampaignCard({ id }) {
       <div className="small">Beneficiary: {c.beneficiary}</div>
       <p>{c.description}</p>
       <div className="small">Target: {String(c.targetAmount)} wei</div>
-      <div className="small">Raised: {String(c.totalRaised)} wei • Signatures: {String(c.signatureCount)}</div>
-      <div className="row" style={{ marginTop: 8 }}>
+      <div className="small">
+        Raised: {String(c.totalRaised)} wei • Signatures: {String(c.signatureCount)}
+      </div>
+
+      <div className="row" style={{ marginTop: 8, gap: 8, alignItems: 'flex-end' }}>
+        {/* Left: contribute (with auto-sign) + explicit sign */}
+        <ContributeCampaign campaignId={id} />
         <SignCampaign campaignId={id} />
+
         <div style={{ flex: 1 }} />
+
+        {/* Right: downloads (receipt for user, bulk export for owner) */}
         <div className="row" style={{ gap: 8 }}>
-          <React.Suspense fallback={<span className="small">…</span>}>
-            <DownloadReceiptButton campaignId={id} />
-          </React.Suspense>
-          {isOwner && (
-            <React.Suspense fallback={<span className="small">…</span>}>
-              <DownloadAllSignaturesButton campaignId={id} />
-            </React.Suspense>
-          )}
+          <DownloadReceiptButton campaignId={id} />
+          {isOwner && <DownloadAllSignaturesButton campaignId={id} />}
         </div>
       </div>
     </div>

@@ -226,5 +226,16 @@ export const PetitionCoreABI = [
     ],
     "stateMutability": "view",
     "type": "function"
-  }
+  },
+  // abi/PetitionCore.js  — add this entry under functions
+{
+  "inputs": [
+    { "internalType": "uint256", "name": "_campaignId", "type": "uint256" }
+  ],
+  "name": "contributeETH",
+  "outputs": [],
+  "stateMutability": "payable",
+  "type": "function"
+}
+
 ];
