@@ -1,23 +1,19 @@
+// src/components/UploadSignature.jsx
 import React from 'react';
 import { useAccount, useWriteContract } from 'wagmi';
-import { PetitionCoreABI } from '../abi/PetitionCore';
-import { PETITION_CORE } from '../config/constants';
+import { ProfileABI } from '../abi/Profile';
+import { PROFILE, ARWEAVE_ORIGIN } from '../config/constants';
 
 import { uploadToArweave } from '../services/arweave_classic';
-
+import SignaturePad from './SignaturePad';
+import Toast from './Toast';
 import {
   generateKey,
   exportKeyRaw,
   encryptBytes,
-  decryptBytes,
   randomNonce,
   hashKeccak,
 } from '../services/crypto';
-
-import { txIdToBytes32 } from '../utils/arweaveId';
-import { toHex } from 'viem';
-import SignaturePad from './SignaturePad';
-import Toast from './Toast';
 
 function dataUrlToUint8(dataUrl) {
   const base64 = dataUrl.split(',')[1];
@@ -26,11 +22,7 @@ function dataUrlToUint8(dataUrl) {
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
   return out;
 }
-
-function arrBufToU8(ab) {
-  return ab instanceof Uint8Array ? ab : new Uint8Array(ab);
-}
-
+function arrBufToU8(ab) { return ab instanceof Uint8Array ? ab : new Uint8Array(ab); }
 function u8ToB64(u8) {
   let s = '';
   for (let i = 0; i < u8.length; i++) s += String.fromCharCode(u8[i]);
@@ -38,13 +30,11 @@ function u8ToB64(u8) {
 }
 
 async function devAutoMineIfLocal() {
-  const host = import.meta.env.VITE_ARWEAVE_GATEWAY_HOST;
-  const port = import.meta.env.VITE_ARWEAVE_GATEWAY_PORT;
-  const proto = import.meta.env.VITE_ARWEAVE_GATEWAY_PROTO;
-  const isLocal = host === 'localhost' && String(port) === '1984' && proto === 'http';
-  if (!isLocal) return;
+  // If you still need local mining, compare ARWEAVE_ORIGIN rather than host/port
   try {
-    await fetch(`${proto}://${host}:${port}/mine`);
+    if (ARWEAVE_ORIGIN === 'http://localhost:1984') {
+      await fetch(`${ARWEAVE_ORIGIN}/mine`);
+    }
   } catch {}
 }
 
@@ -56,8 +46,9 @@ export default function UploadSignature() {
   const [busy, setBusy] = React.useState(false);
   const [txId, setTxId] = React.useState('');
   const [dlUrl, setDlUrl] = React.useState('');
+  const [activate, setActivate] = React.useState(true);
 
-  // New: toggle for public (plaintext) storage so beneficiary can view
+  // Public vs encrypted
   const [makePublic, setMakePublic] = React.useState(true);
 
   const handleBytes = async (inputFromPad) => {
@@ -82,23 +73,18 @@ export default function UploadSignature() {
         throw new Error('Unsupported signature input type');
       }
 
-      // 2) Encrypt or use plaintext based on toggle
+      // 2) Encrypt or use plaintext
       let storedBytes = plainU8;
-      let encScheme = 0; // 0 = plaintext/public
-      let nonce = new Uint8Array(0);
-
       if (!makePublic) {
-        // AES-GCM encryption (only signer device can decrypt)
         const key = await generateKey();
         const rawKey = arrBufToU8(await exportKeyRaw(key));
         localStorage.setItem('sig_key', u8ToB64(rawKey));
-        nonce = randomNonce(); // 12 bytes
+        const nonce = randomNonce(); // 12 bytes
         localStorage.setItem('sig_nonce', u8ToB64(nonce));
         storedBytes = await encryptBytes(key, plainU8, nonce);
-        encScheme = 1; // AES-GCM
       }
 
-      // 3) Upload to Arweave (use content-type image/png for public)
+      // 3) Upload to Arweave
       const tags = makePublic
         ? [
             { name: 'Content-Type', value: 'image/png' },
@@ -114,42 +100,27 @@ export default function UploadSignature() {
 
       const arTxId = await uploadToArweave(storedBytes, tags);
       setTxId(arTxId);
-
       await devAutoMineIfLocal();
 
-      // 4) Save snapshot on-chain
- // keccak256 already returns a 0x-prefixed 32-byte hex string – use directly
-      const contentHashBytes32 = hashKeccak(storedBytes);
-
-      const arIdBytes32 = txIdToBytes32(arTxId);
-            // If public, use zero bytes32; if encrypted, pad the 12-byte nonce to 32 bytes
-      const nonceBytes32 = makePublic
-        ? '0x0000000000000000000000000000000000000000000000000000000000000000'
-        : toHex(nonce, { size: 32 });
+      // 4) Save version on Profile
+      const contentHash = hashKeccak(storedBytes);
       await writeContractAsync({
-        abi: PetitionCoreABI,
-        address: PETITION_CORE,
-        functionName: 'updateSignature',
-        args: [arIdBytes32, contentHashBytes32, encScheme, nonceBytes32],
+        abi: ProfileABI,
+        address: PROFILE,
+        functionName: 'saveSignatureVersion',
+        args: [arTxId, contentHash, activate],
       });
 
-      // 5) If public, offer direct download of plaintext PNG
+      // 5) If public, offer direct download
       if (makePublic) {
         const blob = new Blob([plainU8], { type: 'image/png' });
         const url = URL.createObjectURL(blob);
         setDlUrl(url);
-      } else {
-        // If encrypted, also show local decrypt result for user verification
-        const keyB64 = localStorage.getItem('sig_key');
-        const nonceB64 = localStorage.getItem('sig_nonce');
-        if (keyB64 && nonceB64) {
-          // No-op demo: proof of decrypt works
-        }
       }
 
       setMsg(makePublic
-        ? 'Signature uploaded (public) and pointer saved on-chain.'
-        : 'Signature uploaded (encrypted) and pointer saved on-chain.');
+        ? 'Signature uploaded (public) and version saved on Profile.'
+        : 'Signature uploaded (encrypted) and version saved on Profile.');
     } catch (err) {
       console.error(err);
       setMsg(err?.shortMessage || err?.message || 'Failed to upload signature');
@@ -158,18 +129,16 @@ export default function UploadSignature() {
     }
   };
 
-  const gatewayUrl = txId
-    ? `${import.meta.env.VITE_ARWEAVE_GATEWAY_PROTO || 'https'}://${import.meta.env.VITE_ARWEAVE_GATEWAY_HOST || 'ar-io.net'}${import.meta.env.VITE_ARWEAVE_GATEWAY_PORT ? `:${import.meta.env.VITE_ARWEAVE_GATEWAY_PORT}` : ''}/${txId}`
-    : '';
+  const gatewayUrl = txId ? `${ARWEAVE_ORIGIN}/${txId}` : '';
 
   return (
     <div className="card">
       <h3>Upload / Update Signature</h3>
       <p className="small">
-        Choose public if creator/beneficiary should see the image; choose encrypted if only this device should decrypt later. 
+        Choose public if creator/beneficiary should see the image; choose encrypted if only this device should decrypt later.
       </p>
 
-      <div className="row" style={{ gap: 12, marginBottom: 10 }}>
+      <div className="row" style={{ gap: 12, marginBottom: 10, flexWrap: 'wrap' }}>
         <label className="small">
           <input
             type="checkbox"
@@ -179,6 +148,16 @@ export default function UploadSignature() {
             style={{ marginRight: 6 }}
           />
           Make signature public to beneficiary (plaintext)
+        </label>
+        <label className="small">
+          <input
+            type="checkbox"
+            checked={activate}
+            onChange={(e) => setActivate(e.target.checked)}
+            disabled={busy || isPending}
+            style={{ marginRight: 6 }}
+          />
+          Activate this version after upload
         </label>
       </div>
 

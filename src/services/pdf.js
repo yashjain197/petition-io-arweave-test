@@ -1,3 +1,4 @@
+// src/services/pdf.js
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 
 const MARGIN = 48;

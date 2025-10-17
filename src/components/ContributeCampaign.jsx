@@ -2,9 +2,9 @@
 import React from 'react';
 import { useAccount, usePublicClient, useReadContract, useWriteContract } from 'wagmi';
 import { PetitionCoreABI } from '../abi/PetitionCore';
-import { PETITION_CORE, NETWORK } from '../config/constants';
+import { ProfileABI } from '../abi/Profile';
+import { PETITION_CORE, PROFILE, NETWORK, ARWEAVE_GATEWAY_HOST, ARWEAVE_GATEWAY_PORT, ARWEAVE_GATEWAY_PROTO, ARWEAVE_ORIGIN } from '../config/constants';
 import { parseEther, formatEther, parseEventLogs } from 'viem';
-import { bytes32ToTxId } from '../utils/arweaveId';
 import { importKeyRaw, decryptBytes, hashKeccak } from '../services/crypto';
 import { buildSignedPetitionPDF, downloadPdfBytes } from '../services/pdf';
 
@@ -30,7 +30,7 @@ export default function ContributeCampaign({ campaignId }) {
   const [busy, setBusy] = React.useState(false);
   const [msg, setMsg] = React.useState('');
 
-  // Fee estimates: 15¢ (DAO) and 30¢ (non-DAO)
+  // Fee estimates
   const { data: fee15 } = useReadContract({
     abi: PetitionCoreABI,
     address: PETITION_CORE,
@@ -47,10 +47,10 @@ export default function ContributeCampaign({ campaignId }) {
   async function alreadySigned() {
     if (!address) return false;
     try {
-      const [found] = await publicClient.readContract({
+      const found = await publicClient.readContract({
         abi: PetitionCoreABI,
         address: PETITION_CORE,
-        functionName: 'getUserSignatureIdForCampaign',
+        functionName: 'hasUserSigned',
         args: [BigInt(campaignId), address],
       });
       return Boolean(found);
@@ -62,13 +62,13 @@ export default function ContributeCampaign({ campaignId }) {
   async function hasActiveSignature() {
     if (!address) return false;
     try {
-      await publicClient.readContract({
-        abi: PetitionCoreABI,
-        address: PETITION_CORE,
-        functionName: 'getActiveSignature',
+      const res = await publicClient.readContract({
+        abi: ProfileABI,
+        address: PROFILE,
+        functionName: 'getActiveSignatureVersion',
         args: [address],
       });
-      return true;
+      return Boolean(res && res[3]); // isActive
     } catch {
       return false;
     }
@@ -101,25 +101,30 @@ export default function ContributeCampaign({ campaignId }) {
 
       const receipt = await publicClient.waitForTransactionReceipt({ hash });
 
-      // Detect whether auto-sign happened, and if so, build the same PDF as SignCampaign
-      let autoSignedEv = null;
+      // Detect auto-sign by SignatureAddedLight
+      let autoSigned = false;
       try {
         const logs = parseEventLogs({
           abi: PetitionCoreABI,
           logs: receipt.logs,
-          eventName: 'SignatureAdded',
+          eventName: 'SignatureAddedLight',
         });
-        if (logs.length) autoSignedEv = logs[logs.length - 1];
+        autoSigned = logs.some(l => String(l.args.signer).toLowerCase() === String(address).toLowerCase());
       } catch {}
 
-      // Update UX message
+      // UX
       const feeNote = !signed ? ` (included est. fee ≈ ${feeWei ? formatEther(feeWei) : '0'} ETH)` : '';
-      setMsg(`Contributed successfully${autoSignedEv ? ' and auto-signed' : ''}.${feeNote}`);
+      setMsg(`Contributed successfully${autoSigned ? ' and auto-signed' : ''}.${feeNote}`);
       setAmountEth('');
 
-      // If auto-signed, fetch asset, verify, decrypt if needed, and download receipt PDF
-      if (autoSignedEv) {
-        const { signatureId, signatureVersionId, signedArTxId, signedContentHash } = autoSignedEv.args;
+      if (autoSigned) {
+        // Use active signature pointer from Profile
+        const [arTxId, contentHash] = await publicClient.readContract({
+          abi: ProfileABI,
+          address: PROFILE,
+          functionName: 'getActiveSignatureVersion',
+          args: [address],
+        });
 
         // Campaign info for PDF
         const c = await publicClient.readContract({
@@ -129,20 +134,16 @@ export default function ContributeCampaign({ campaignId }) {
           args: [BigInt(campaignId)],
         });
 
-        // Fetch signature bytes from the configured gateway
-        const gwProto = import.meta.env.VITE_ARWEAVE_GATEWAY_PROTO || 'https';
-        const gwHost = import.meta.env.VITE_ARWEAVE_GATEWAY_HOST || 'ar-io.net';
-        const gwPort = import.meta.env.VITE_ARWEAVE_GATEWAY_PORT ? `:${import.meta.env.VITE_ARWEAVE_GATEWAY_PORT}` : '';
-        const arTxId = bytes32ToTxId(signedArTxId);
-        const url = `${gwProto}://${gwHost}${gwPort}/${arTxId}`;
+        // Fetch signature bytes
+        const url = `${ARWEAVE_ORIGIN}/${arTxId}`;
         let raw = null;
         try {
           const resp = await fetch(url);
           if (resp.ok) raw = new Uint8Array(await resp.arrayBuffer());
         } catch {}
-        // Verify integrity
+
         let pngBytes = null;
-        if (raw && String(hashKeccak(raw)).toLowerCase() === String(signedContentHash).toLowerCase()) {
+        if (raw && String(hashKeccak(raw)).toLowerCase() === String(contentHash).toLowerCase()) {
           if (isPng(raw)) {
             pngBytes = raw;
           } else {
@@ -158,7 +159,6 @@ export default function ContributeCampaign({ campaignId }) {
           }
         }
 
-        // Build PDF and download (hash is this contribution transaction’s hash)
         const pdfBytes = await buildSignedPetitionPDF({
           network: NETWORK || 'sepolia',
           signerAddress: address,
@@ -170,12 +170,12 @@ export default function ContributeCampaign({ campaignId }) {
             targetAmount: String(c.targetAmount),
           },
           txHash: hash,
-          signatureVersionId: String(signatureVersionId),
+          signatureVersionId: String(Number(Date.now() / 1000)), // no version id on-chain; use timestamp marker
           arweaveTxId: arTxId,
           signaturePngBytes: pngBytes,
           generatedAt: new Date(),
         });
-        downloadPdfBytes(pdfBytes, `petition_${campaignId}_signature_${String(autoSignedEv.args.signatureId)}.pdf`);
+        downloadPdfBytes(pdfBytes, `petition_${campaignId}_signature.pdf`);
       }
     } catch (e) {
       setMsg(e?.shortMessage || e?.message || 'Contribution failed');

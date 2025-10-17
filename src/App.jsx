@@ -1,8 +1,10 @@
+// src/App.jsx
 import React from 'react';
 import NavBar from './components/NavBar';
 import UploadSignature from './components/UploadSignature';
 import ActiveSignatureCard from './components/ActiveSignatureCard';
 import CampaignList from './components/CampaignList';
+import ProfilePage from './components/ProfilePage';
 
 export default function App(){
   const [view, setView] = React.useState('campaigns');
@@ -18,6 +20,7 @@ export default function App(){
             <UploadSignature />
           </>
         )}
+        {view === 'profile' && <ProfilePage />}
       </main>
     </div>
   );

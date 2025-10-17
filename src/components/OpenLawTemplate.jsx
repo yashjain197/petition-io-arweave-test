@@ -1,3 +1,4 @@
+// src/components/OpenLawTemplate.jsx
 import React from 'react';
 import { getOpenLawClient, compileTemplate, exportDocument } from '../services/openlaw';
 

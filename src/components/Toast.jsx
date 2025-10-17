@@ -1,3 +1,4 @@
+// src/components/Toast.jsx
 import React from 'react';
 export default function Toast({msg, onClose}){
   if(!msg) return null;

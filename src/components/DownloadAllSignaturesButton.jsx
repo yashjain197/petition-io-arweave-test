@@ -1,100 +1,115 @@
+// src/components/DownloadAllSignaturesButton.jsx
+// Event-scan implementation using SignatureAddedLight to assemble a PDF for owners.
 import React from 'react';
-import { useAccount, usePublicClient, useReadContract } from 'wagmi';
+import { useAccount, usePublicClient } from 'wagmi';
 import { PetitionCoreABI } from '../abi/PetitionCore';
-import { PETITION_CORE, NETWORK } from '../config/constants';
-import { bytes32ToTxId } from '../utils/arweaveId';
+import { ProfileABI } from '../abi/Profile';
+import {
+  PETITION_CORE,
+  PROFILE,
+  NETWORK,
+  PETITION_CORE_DEPLOY_BLOCK,
+  ARWEAVE_GATEWAY_HOST,
+  ARWEAVE_GATEWAY_PORT,
+  ARWEAVE_GATEWAY_PROTO,
+  ARWEAVE_ORIGIN
+} from '../config/constants';
+import { parseAbiItem } from 'viem';
 import { hashKeccak } from '../services/crypto';
 import { buildCampaignSignaturesPDF, downloadPdfBytes } from '../services/pdf';
+
+const evSignatureAddedLight = parseAbiItem(
+  'event SignatureAddedLight(uint256 indexed campaignId, address indexed signer, string message)'
+);
 
 export default function DownloadAllSignaturesButton({ campaignId }) {
   const { address } = useAccount();
   const publicClient = usePublicClient();
   const [busy, setBusy] = React.useState(false);
 
-  const { data: campaign } = useReadContract({
-    abi: PetitionCoreABI,
-    address: PETITION_CORE,
-    functionName: 'getCampaignInfo',
-    args: [BigInt(campaignId)],
-  });
-
   const onDownload = async () => {
     try {
       if (!address) throw new Error('Connect wallet first');
       setBusy(true);
 
-      if (!campaign) throw new Error('Campaign not found');
-      const isOwner = address.toLowerCase() === campaign.beneficiary.toLowerCase() || address.toLowerCase() === campaign.creator.toLowerCase();
-      if (!isOwner) throw new Error('Only creator/beneficiary can export');
-
-      // Important: pass account so msg.sender is set for view calls guarded in the contract
-      const total = await publicClient.readContract({
+      // Verify ownership
+      const c = await publicClient.readContract({
         abi: PetitionCoreABI,
         address: PETITION_CORE,
-        functionName: 'getCampaignSignaturesCount',
+        functionName: 'getCampaignInfo',
         args: [BigInt(campaignId)],
-        account: address,
       });
+      const isOwner =
+        address.toLowerCase() === c.beneficiary.toLowerCase() ||
+        address.toLowerCase() === c.creator.toLowerCase();
+      if (!isOwner) throw new Error('Only creator/beneficiary can export');
 
-      const pageSize = 50n;
-      let offset = 0n;
+      // Scan logs for this campaign
+      const latest = await publicClient.getBlockNumber();
+      const from = PETITION_CORE_DEPLOY_BLOCK || 0n;
+      const step = 3000n;
+
       const rows = [];
-
-      const gwProto = import.meta.env.VITE_ARWEAVE_GATEWAY_PROTO || 'https';
-      const gwHost = import.meta.env.VITE_ARWEAVE_GATEWAY_HOST || 'ar-io.net';
-      const gwPort = import.meta.env.VITE_ARWEAVE_GATEWAY_PORT ? `:${import.meta.env.VITE_ARWEAVE_GATEWAY_PORT}` : '';
-
-      while (offset < total) {
-        const limit = (total - offset) > pageSize ? pageSize : (total - offset);
-        const items = await publicClient.readContract({
-          abi: PetitionCoreABI,
+      for (let start = from; start <= latest; start += step) {
+        const end = start + step > latest ? latest : start + step;
+        const logs = await publicClient.getLogs({
           address: PETITION_CORE,
-          functionName: 'getCampaignSignaturesDetailed',
-          args: [BigInt(campaignId), offset, limit],
-          account: address, // ensures onlyCreatorOrBeneficiary modifier passes
+          event: evSignatureAddedLight,
+          args: { campaignId: BigInt(campaignId) },
+          fromBlock: start,
+          toBlock: end,
         });
 
-        for (const it of items) {
-          const signer = it.signer;
-          const ts = Number(it.timestamp);
-          const msg = it.message;
-          const txId = bytes32ToTxId(it.signedArTxId);
-          const url = `${gwProto}://${gwHost}${gwPort}/${txId}`;
+        for (const lg of logs) {
+          const signer = lg.args.signer;
+          const message = lg.args.message || '';
+          const block = await publicClient.getBlock({ blockHash: lg.blockHash });
+          const ts = Number(block.timestamp);
+
+          // Try to get current active signature pointer for the signer
+          let arweaveTxId = '';
           let imageBytes = null;
           try {
-            const resp = await fetch(url);
-            if (resp.ok) {
-              const bytes = new Uint8Array(await resp.arrayBuffer());
-              const onchain = String(it.signedContentHash).toLowerCase();
-              const got = String(hashKeccak(bytes)).toLowerCase();
-              if (onchain === got) {
-                imageBytes = bytes; // may be PNG (public) or encrypted (will render as unavailable)
+            const [arTxId, contentHash] = await publicClient.readContract({
+              abi: ProfileABI,
+              address: PROFILE,
+              functionName: 'getActiveSignatureVersion',
+              args: [signer],
+            });
+            if (arTxId) {
+              arweaveTxId = arTxId;
+              const url = `${ARWEAVE_ORIGIN}/${arTxId}`;
+              const resp = await fetch(url);
+              if (resp.ok) {
+                const bytes = new Uint8Array(await resp.arrayBuffer());
+                const got = String(hashKeccak(bytes)).toLowerCase();
+                if (String(contentHash).toLowerCase() === got) {
+                  imageBytes = bytes; // may be encrypted; PDF helper will show 'unavailable' if not PNG
+                }
               }
             }
-          } catch (e) {
-            console.warn('Fetch failed for', txId, e);
+          } catch {
+            // ignore per-row failures
           }
 
           rows.push({
             signer,
-            message: msg,
+            message,
             timestamp: ts,
-            arweaveTxId: txId,
+            arweaveTxId,
             imageBytes,
           });
         }
-
-        offset += limit;
       }
 
       const pdfBytes = await buildCampaignSignaturesPDF({
         network: NETWORK || 'sepolia',
         campaign: {
-          id: String(campaign.id),
-          title: campaign.title,
-          description: campaign.description,
-          beneficiary: campaign.beneficiary,
-          targetAmount: String(campaign.targetAmount),
+          id: String(c.id),
+          title: c.title,
+          description: c.description,
+          beneficiary: c.beneficiary,
+          targetAmount: String(c.targetAmount),
         },
         rows,
         generatedAt: new Date(),

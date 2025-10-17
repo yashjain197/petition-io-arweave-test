@@ -1,8 +1,8 @@
+// src/components/ActiveSignatureCard.jsx
 import React from 'react';
 import { useAccount, useReadContract } from 'wagmi';
-import { PetitionCoreABI } from '../abi/PetitionCore';
-import { PETITION_CORE } from '../config/constants';
-import { bytes32ToTxId } from '../utils/arweaveId';
+import { ProfileABI } from '../abi/Profile';
+import { PROFILE, ARWEAVE_ORIGIN } from '../config/constants';
 import { importKeyRaw, decryptBytes, hashKeccak } from '../services/crypto';
 
 function b64ToBytes(b64){
@@ -21,25 +21,27 @@ function isPng(bytes) {
 export default function ActiveSignatureCard(){
   const { address } = useAccount();
   const { data, refetch } = useReadContract({
-    abi: PetitionCoreABI,
-    address: PETITION_CORE,
-    functionName: 'getActiveSignature',
+    abi: ProfileABI,
+    address: PROFILE,
+    functionName: 'getActiveSignatureVersion',
     args: address ? [address] : undefined,
     query: { enabled: !!address }
   });
 
-  const versionId = data?.[0];
-  const version = data?.[1];
+  const arTxId = data?.[0];
+  const contentHash = data?.[1];
+  const createdAt = data?.[2];
+  const isActive = data?.[3];
 
   const onDownload = async ()=>{
-    if (!versionId) return alert('No active signature');
+    if (!arTxId) return alert('No active signature');
     try{
-      const txId = bytes32ToTxId(version.arTxId);
-      const url = `https://arweave.net/${txId}`;
+      const url = `${ARWEAVE_ORIGIN}/${arTxId}`;
       const resp = await fetch(url);
+      if (!resp.ok) throw new Error('Failed to fetch from gateway');
       const ct = new Uint8Array(await resp.arrayBuffer());
 
-      const onchain = String(version.contentHash).toLowerCase();
+      const onchain = String(contentHash).toLowerCase();
       const got = String(hashKeccak(ct)).toLowerCase();
       if (onchain !== got) {
         console.warn('Integrity mismatch', { onchain, got });
@@ -60,7 +62,7 @@ export default function ActiveSignatureCard(){
       const blob = new Blob([pt], { type: 'image/png' });
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
-      a.download = `signature_${versionId}.png`;
+      a.download = `signature_active.png`;
       document.body.appendChild(a); a.click(); a.remove();
     }catch(e){
       alert(e.message || 'Failed to download/decrypt');
@@ -77,12 +79,11 @@ export default function ActiveSignatureCard(){
         </div>
       </div>
       {!address && <div className="small">Connect wallet to view</div>}
-      {address && !versionId && <div className="small">No active signature yet</div>}
-      {versionId && (
+      {address && !isActive && <div className="small">No active signature yet</div>}
+      {isActive && (
         <>
-          <div>ID: {String(versionId)}</div>
-          <div className="small">encScheme: {version.encScheme} • saved: {new Date(Number(version.createdAt)*1000).toLocaleString()}</div>
-          <div className="small">Arweave tx (bytes32): {version.arTxId}</div>
+          <div>Arweave TX: {arTxId}</div>
+          <div className="small">saved: {new Date(Number(createdAt)*1000).toLocaleString()}</div>
         </>
       )}
     </div>

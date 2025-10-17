@@ -18,7 +18,7 @@
     "pdf-lib": "^1.17.1",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "react-signature-canvas": "^1.0.6",
+    "react-signature-canvas": "^1.0.7",
     "viem": "^2.12.1",
     "wagmi": "^2.12.8",
     "warp-contracts": "^1.4.45"
